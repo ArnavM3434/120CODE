@@ -3,6 +3,106 @@
 ; 8 bits (the high 8 bits, for your convenience) marking pixels in the
 ; line for that character.
 
+; This program receives multiple inputs - the first is a character that should be printed when a specific bit is 0, the second is a character that should be 
+; printed when a specific bit is 1, and the rest are characters that should be enlarged, appear on the console, and consist of the first two characters. 
+; The general approach was this: calculate the address in memory of the first given character, and find the first of the 16 lines in memory corresponding to
+; the character. Process 8 bits in this line; then, restart this entire process with the next character, once again using the first of 16 lines in memory
+; corresponding to the character. Keep track of the character using a location in memory called INCR1, which keeps getting modified. Once the null character
+; is reached, move onto the next line. Specifically, starting again from the first character, process the 2nd line in the 16 lines in memory corresponding
+; to the character. Then move onto the next character. The line is also stored in memory in a location called INCR2, which keeps changing. With this 
+; approach, any string ending in a NULL character can be properly enlarged on the screen.
+
+; R0 contains the ASCII code for the character to be printed onto the console
+; R1 stores the ASCII code for the second input (corresponding to memory location x5001)
+; R2 stores the inner loop counter (starts at 8) to process the leftmost 8 bits on each line
+; R3 is used as a temp; it stores both INCR1 (to offset the address in R5 to move onto new characters), and INCR2 (to offset the address in R4 to move onto
+; new lines)
+; R4 stores the address of each of the 16 .FILL statements corresponding to the appropriate character
+; R5 first contains the ASCII code for each of the characters to be enlarged, and then contains the ASCII code for the first input to the program
+; R6 contains the actual instruction at each .FILL statement in FONT_DATA
+
+         .ORIG  x3000
+    
+BEGIN	 LD  R3, INCR1         ; Put increment value (which starts at 0) in R3
+         LD  R5, CHAR	       ; R5 contains memory location x5002
+         ADD R5, R5, R3        ; R5 contains memory location x5002 plus some increment value (this is how the characters will be processed)
+	 LDR R5, R5, #0        ; R5 contains ASCII code of character being processed 
+         BRz NEXTLINE          ; Specific case where only a null character is given, just keep printing new lines
+         AND R3, R3, #0        ; R3 resets to 0
+         AND R2, R2, #0        ; R2 contains 0
+         ADD R2, R2, #8        ; R2 contains 8 (used for a loop)
+         ADD R3, R3, #8        ; R3 contains 8
+         ADD R3, R3, #8        ; R3 contains 16(used for a loop)
+	 AND R0, R0, #0        ; R0 contains 0
+	 AND R4, R4, #0        ; R4 contains 0
+         
+
+         
+                               ; The next block of code is to find the starting address of the 16 instructions corresponding to the character input
+
+FINDADDRESS  ADD R4, R4, R5   ; R4 gets the value of the ASCII character in R5 added to itself (repeated addition)
+         ADD R3, R3, #-1      ; R3 (loop counter) gets decremented
+         BRp FINDADDRESS      ; If R3 is > 0, continue process of multiplying R5 by 16 and storing it  
+         AND R2, R2, #0       ; R2 resets to 0 
+         ADD R2, R2, #8       ; R2 becomes 8 (to be used for a later loop)
+      	 LEA R5, FONT_DATA    ; R5 temporarily stores address of first instruction in FONT_DATA 
+         ADD R4, R4, R5       ; Now R4 holds the starting address of the first of 16 instructions corresponding to the character input
+         LD  R3, INCR2        ; Depending on the line, R3 will store a certain increment value (starts at 0)
+         ADD R4, R4, R3       ; Now R4 represents starting location of line to be processed
+         AND R3, R3, #0       ; Reset R3 to 0
+         LDI R5, CHAR0        ; Now R5 contains ASCII code for first input
+         LDI R1, CHAR1        ; R1 contains ASCII code for second input
+         
+      
+
+                              ;Now the appropriate address in FONT_DATA has been computed, and it's stored in R4
+                              ;The next block of code begins process of dispalying characters on the console
+
+PRINTING    LDR R6, R4, #0    ; R6 gets the 16 bits corresponding to the first line in the picture
+WITHINLINE  ADD R6, R6, #0    ; This is for the next branch instruction, which depends on R6
+            BRn IFNegative    ; If R6 starts with a one, branch to another instruction
+            ADD R0, R0, R5    ; If R6 doesn't start with a one, place first input into R0
+            OUT               ; Print first input to the console
+            BRnzp NOMATTERWHAT ; Don't want to execute the IFNegative scenario so branch to NOMATTERWHAT
+IFNegative  ADD R0, R0, R1    ; If R6 starts with a one, place second input into R0
+            OUT               ; Print second input to the console
+
+NOMATTERWHAT    AND R0, R0, #0    ; Reset R0 to 0
+                ADD R6, R6, R6    ; Shift bits in R6 left
+                ADD R2, R2, #-1   ; Decrement counter (which began at 8) - only want to execute this loop 8 times
+                BRp WITHINLINE    ; If counter is greater than 0, repeat process, branch to WITHINLINE
+		LD  R3, INCR1     ; Now a character is done being processed; put increment value in R3, now trying to decide whether to move onto next line
+                ADD R3, R3, #1    ; Increment R3
+		ST  R3, INCR1     ; Store R3 back into INCR1, signifies we're moving onto a new character  
+		LD R5, CHAR	  ; R5 contains memory location x5002
+         	ADD R5, R5, R3    ; R5 contains memory location x5002 plus some increment value (this is how the characters will be processed)
+	 	LDR R5, R5, #0    ; R5 contains ASCII code of character being processed             
+                BRnp BEGIN        ; If the ASCII code is not null, restart process from BEGIN
+NEXTLINE        AND R3, R3, #0    ; Now onto a new line; reset R3 back to 0.
+		AND R0, R0, #0    ; Set R0 back to 0 
+                ADD R0, R0, x000A ; Store new line character into R0
+                ST  R3, INCR1     ; Store R3 into INCR1 (now INCR1 contains 0, want to start from first character again).
+                OUT               ; Print a new line.
+                LD  R3, INCR2     ; R3 gets the value at INCR2 (INCR2 starts at 0)
+                ADD R3, R3, #1    ; R3 is incremented
+                ST  R3, INCR2     ; This incremented value is placed back into INCR2, signifying a new line
+                ADD R3, R3, #-8   ; Now testing to see if R3 has reached 16
+                ADD R3, R3, #-8   ; Same as above line
+                BRn BEGIN         ; If R3 has not reached 16, we restart the entire process again from BEGIN, now with a new line (different INCR2)
+ENDING          HALT              ; If all 16 .FILL lines are processed, program is done
+                
+                
+        
+                
+
+         
+                
+CHAR0	.FILL   x5000             ; Address of first input, which is character printed to console when bit is 0
+CHAR1   .FILL   x5001             ; Address of second input, which is character printed to console when bit is 1
+CHAR    .FILL   x5002             ; Address of third input, which is character being drawn
+INCR1   .FILL   x0000
+INCR2   .FILL   x0000
+
 FONT_DATA
 	.FILL	x0000
 	.FILL	x0000
@@ -4100,3 +4200,5 @@ FONT_DATA
 	.FILL	x0000
 	.FILL	x0000
 	.FILL	x0000
+
+        .END
